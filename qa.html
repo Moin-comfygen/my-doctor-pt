@@ -1,19 +1,314 @@
-<!doctype html><html><head><meta charset="utf-8"><title>My Doctor checks</title></head><body><pre id="results">RUNNING</pre><iframe id="test" src="index.html" style="width:390px;height:844px"></iframe><script>
-const output=document.querySelector('#results'), frame=document.querySelector('#test');
-frame.onload=async()=>{const w=frame.contentWindow,d=w.document,results=[];const run=s=>w.eval(s);run("state=seed();save();role='';go('launcher')");const check=(v,s)=>{if(!v)throw Error(s);results.push('PASS '+s)};const click=s=>{const e=d.querySelector(s);if(!e)throw Error('Missing '+s);e.click()};const submit=s=>d.querySelector(s).requestSubmit();try{
-check(d.body.textContent.includes('Good health'),'Launcher renders');
-click('[data-role="patient"]');submit('#auth-form');d.querySelector('[name=otp]').value='1234';submit('#auth-form');check(d.body.textContent.includes('Hello, Aarav'),'Patient OTP sign-in');
-click('[data-screen="doctors"]');check(d.querySelectorAll('.doctor').length===8,'Eight doctor profiles');
-const input=d.querySelector('#doctor-search');input.value='Cardiologist';input.dispatchEvent(new w.Event('input',{bubbles:true}));check(d.querySelectorAll('.doctor').length===1,'Doctor search');
-run("search='';filter='All';render();showDoctor('d0');");click('[data-action="book"]');const date=d.querySelector('[name=date]');date.value=run('day(1)');date.dispatchEvent(new w.Event('change',{bubbles:true}));submit('#booking-form');click('[data-action=payment]');submit('#payment-form');await new Promise(r=>setTimeout(r,1300));check(run('state.appointments.length')===4,'Payment creates appointment');check(d.querySelector('dialog').textContent.includes('confirmed'),'Confirmation displayed');
-run("modal.close();role='doctor';doctorId='d0';doctorDay=day(1);go('home');");check(d.body.textContent.includes('Aarav'),'Booking visible to doctor');run("consult(state.appointments.at(-1).id)");click('[data-action=prescribe]');for(const [n,v] of Object.entries({medicine:'Demo test medicine',dosage:'1 tablet',frequency:'Once daily',duration:'2 days',instructions:'Fictional'}))d.querySelector('[name='+n+']').value=v;submit('#prescription-form');check(run('state.prescriptions.length')===2,'Doctor prescription saved');check(run("state.records.some(r=>r.rx===state.prescriptions.at(-1).id)"),'Prescription creates medical record');
-run("role='patient';go('prescriptions')");check(d.body.textContent.includes('Ananya'),'Prescription visible to patient');run("go('queue')");const old=run('queueStatus(state.appointments[0]).current');click('[data-action=advance-queue]');check(run('queueStatus(state.appointments[0]).current')===old+1,'Queue state advances');
-run("role='admin';adminTab='Payments';go('home');window.confirm=()=>true");click('[data-action=refund]');check(run("state.appointments[0].payment==='Refund Pending'"),'Refund requested');click('[data-action=process-refund]');check(run("state.appointments[0].payment==='Refunded'&&state.appointments[0].status==='Cancelled'"),'Refund processed');
-run("adminTab='Commission';render()");d.querySelector('[name=percent]').value=15;submit('#commission-form');check(run('state.commission')===15,'Commission calculation state');
-run("doctor('d7').status='Pending';adminTab='KYC Verification';render()");run("document.querySelector('[data-action=kyc][data-id=d7]').click()");click('[data-action=kyc-approve]');check(run("doctor('d7').status==='Approved'"),'KYC approval synchronizes');
-for(const tab of run('adminTabs')){run('adminTab='+JSON.stringify(tab)+';render()');check(d.querySelector('.admin-content')!==null,'Admin '+tab);}
-run("role='patient';modal.close();go('home')");for(const width of [320,360,375,390,414,430,768,1280]){frame.style.width=width+'px';await new Promise(r=>setTimeout(r,20));check(d.documentElement.scrollWidth<=width,'No home overflow at '+width+'px');}
-check(JSON.parse(w.localStorage.getItem('my-doctor-mvp-v1')).commission===15,'Local storage persisted');
-run("state=seed();save();role='';go('launcher')");output.textContent=results.join('\n')+'\nALL CHECKS PASSED';
-}catch(e){output.textContent=results.join('\n')+'\nFAIL '+e.stack;}};
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My Doctor browser checks</title>
+  <style>
+    body { margin: 20px; font: 14px/1.5 monospace; color: #18334a; background: #f4f9fc; }
+    #results { white-space: pre-wrap; overflow-wrap: anywhere; }
+    #test { display: block; width: 390px; height: 568px; border: 1px solid #c9dce6; background: white; }
+  </style>
+</head>
+<body>
+  <pre id="results" role="status">RUNNING — connected workflows and responsive checks</pre>
+  <iframe id="test" title="My Doctor browser test workspace"></iframe>
+  <script>
+    'use strict';
+    const output = document.querySelector('#results');
+    const frame = document.querySelector('#test');
+    const storageKey = 'my-doctor-mvp-v1';
+    const results = [];
+    const runtimeErrors = [];
+    const widths = [320, 360, 375, 390, 414, 430, 768, 1280];
+    const snapshotStorage = storage => Array.from({ length: storage.length }, (_, index) => {
+      const key = storage.key(index);
+      return [key, storage.getItem(key)];
+    });
+    // Capture data before index.html bootstraps. The marker identifies browsers
+    // that share a local-file storage area between the QA page and application.
+    const originalStorage = snapshotStorage(localStorage);
+    const storageMarker = 'my-doctor-qa-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    localStorage.setItem(storageMarker, 'storage-probe');
+    let finished = false;
+
+    frame.onload = async () => {
+      if (finished || frame.contentWindow.location.href === 'about:blank') return;
+      const w = frame.contentWindow;
+      const d = w.document;
+      const sharedStorage = w.localStorage.getItem(storageMarker) === 'storage-probe';
+      const baseline = sharedStorage ? originalStorage : snapshotStorage(w.localStorage);
+      localStorage.removeItem(storageMarker);
+      const originalEntry = baseline.find(([key]) => key === storageKey);
+      const run = source => w.eval(source);
+      const pause = () => new Promise(resolve => setTimeout(resolve, 20));
+      const visible = element => element.getClientRects().length > 0 &&
+        w.getComputedStyle(element).visibility !== 'hidden';
+      const describe = element => element.id ? '#' + element.id :
+        element.tagName.toLowerCase() + (element.className && typeof element.className === 'string'
+          ? '.' + element.className.trim().replace(/\s+/g, '.') : '');
+      const check = (condition, label) => {
+        if (runtimeErrors.length) throw new Error('JavaScript runtime error: ' + runtimeErrors.join(' | '));
+        if (!condition) throw new Error(label);
+        results.push('PASS ' + label);
+      };
+      const click = selector => {
+        const element = d.querySelector(selector);
+        if (!element) throw new Error('Missing ' + selector);
+        element.click();
+      };
+      const submit = selector => {
+        const form = d.querySelector(selector);
+        if (!form) throw new Error('Missing form ' + selector);
+        if (!form.checkValidity()) throw new Error('Invalid test form ' + selector);
+        form.requestSubmit();
+      };
+      const resize = async width => {
+        frame.style.width = width + 'px';
+        frame.style.height = (width <= 430 ? 568 : width === 768 ? 740 : 800) + 'px';
+        await pause();
+      };
+      const layout = label => {
+        const viewportWidth = d.documentElement.clientWidth;
+        const overflow = Math.max(d.documentElement.scrollWidth, d.body.scrollWidth) - viewportWidth;
+        const offenders = () => Array.from(d.querySelectorAll('body *')).filter(visible)
+          .filter(element => element.getBoundingClientRect().right > viewportWidth + 1)
+          .slice(0, 5).map(describe).join(', ');
+        check(overflow <= 1, label + ': no page overflow' +
+          (overflow > 1 ? ' (' + Math.ceil(overflow) + 'px: ' + offenders() + ')' : ''));
+        if (w.innerWidth <= 700) {
+          const controls = Array.from(d.querySelectorAll(
+            'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, textarea'
+          )).filter(visible);
+          const smallControls = controls.filter(element => parseFloat(w.getComputedStyle(element).fontSize) < 16);
+          check(!smallControls.length, label + ': readable form text (16px minimum)' +
+            (smallControls.length ? ' — ' + smallControls.map(describe).join(', ') : ''));
+          const targets = Array.from(d.querySelectorAll(
+            'header button, nav[aria-label="Main navigation"] button, .mobile-menu, .sidebar.open button'
+          )).filter(visible);
+          const smallTargets = targets.filter(element => {
+            const rect = element.getBoundingClientRect();
+            return rect.width < 43.5 || rect.height < 43.5;
+          });
+          check(!smallTargets.length, label + ': navigation targets at least 44px' +
+            (smallTargets.length ? ' — ' + smallTargets.map(element => {
+              const rect = element.getBoundingClientRect();
+              return describe(element) + ' ' + rect.width.toFixed(1) + '×' + rect.height.toFixed(1);
+            }).join(', ') : ''));
+        }
+        const navigation = d.querySelector('nav[aria-label="Main navigation"]');
+        if (navigation && visible(navigation)) {
+          const rect = navigation.getBoundingClientRect();
+          check(rect.left >= -1 && rect.right <= w.innerWidth + 1 && rect.bottom <= w.innerHeight + 1,
+            label + ': bottom navigation fits viewport');
+        }
+      };
+      const modalLayout = label => {
+        const modal = d.querySelector('dialog[open]');
+        check(Boolean(modal), label + ': dialog opens');
+        const rect = modal.getBoundingClientRect();
+        check(rect.left >= -1 && rect.top >= -1 && rect.right <= w.innerWidth + 1 && rect.bottom <= w.innerHeight + 1,
+          label + ': dialog fits ' + w.innerWidth + '×' + w.innerHeight);
+        check(modal.scrollWidth <= modal.clientWidth + 1, label + ': dialog content has no horizontal overflow');
+        const close = modal.querySelector('[data-action="close"]');
+        if (close && w.innerWidth <= 700) {
+          const closeRect = close.getBoundingClientRect();
+          check(closeRect.width >= 43.5 && closeRect.height >= 43.5, label + ': close target at least 44px');
+        }
+        layout(label);
+      };
+      const closeModal = () => run("if(modal.open)modal.close()");
+      const onError = event => runtimeErrors.push(event.message || 'Uncaught application error');
+      const onRejection = event => runtimeErrors.push(String(event.reason?.stack || event.reason || 'Unhandled rejection'));
+      w.addEventListener('error', onError);
+      w.addEventListener('unhandledrejection', onRejection);
+      const restoreStorage = () => {
+        // Only this key changes in the app. Preserve unrelated data and updates
+        // made by another tab; never clear localStorage.
+        if (originalEntry) w.localStorage.setItem(storageKey, originalEntry[1]);
+        else w.localStorage.removeItem(storageKey);
+        localStorage.removeItem(storageMarker);
+      };
+      window.addEventListener('pagehide', restoreStorage, { once: true });
+      let failure = null;
+      try {
+        check(run("typeof seed==='function'&&typeof render==='function'"), 'Application JavaScript initializes');
+        run("state=seed();save();role='';go('launcher')");
+        check(d.body.textContent.includes('Good health'), 'Launcher renders');
+        click('[data-role="patient"]');
+        submit('#auth-form');
+        d.querySelector('[name="otp"]').value = '1234';
+        submit('#auth-form');
+        check(d.body.textContent.includes('Hello, Aarav'), 'Patient OTP sign-in');
+        click('[data-screen="doctors"]');
+        check(d.querySelectorAll('.doctor').length === 8, 'Eight doctor profiles');
+        await resize(390);
+        const specialityRail = d.querySelector('.speciality-rail');
+        specialityRail.scrollLeft = specialityRail.scrollWidth;
+        const railOffset = specialityRail.scrollLeft;
+        click('[data-action="speciality"][data-value="ENT"]');
+        check(railOffset > 0 && Math.abs(d.querySelector('.speciality-rail').scrollLeft - railOffset) < 1 &&
+          d.querySelector('[data-value="ENT"]').getAttribute('aria-pressed') === 'true' &&
+          d.querySelectorAll('.doctor').length === 1 && d.querySelector('.doctor').textContent.includes('Sana Khan'),
+          'Mobile ENT filter preserves speciality rail scroll and shows the matching doctor');
+        click('[data-action="speciality"][data-value="All"]');
+        const searchInput = d.querySelector('#doctor-search');
+        searchInput.value = 'Cardiologist';
+        searchInput.dispatchEvent(new w.Event('input', { bubbles: true }));
+        check(d.querySelectorAll('.doctor').length === 1, 'Doctor search');
+        run("search='';filter='All';render();showDoctor('d0')");
+        run("toast('Demo error')");
+        const dialogFeedback = d.querySelector('dialog[open] #dialog-feedback');
+        check(dialogFeedback && visible(dialogFeedback) && dialogFeedback.textContent === 'Demo error' &&
+          dialogFeedback.getBoundingClientRect().bottom <= dialogFeedback.closest('dialog').getBoundingClientRect().bottom,
+          'Modal feedback is visible inside the open dialog');
+        modalLayout('Doctor profile, 390px');
+        click('[data-action="book"]');
+        // Tomorrow may be Sunday or fully booked. Find a working day with slots.
+        const bookingDate = run("Array.from({length:14},(_,i)=>day(i+1)).find(date=>slots(doctor('d0'),date).length)");
+        check(Boolean(bookingDate), 'A future working day has available slots');
+        const dateInput = d.querySelector('#booking-form [name="date"]');
+        dateInput.value = bookingDate;
+        dateInput.dispatchEvent(new w.Event('change', { bubbles: true }));
+        modalLayout('Booking form, 390px');
+        submit('#booking-form');
+        modalLayout('Booking review, 390px');
+        click('[data-action="payment"]');
+        modalLayout('Payment form, 390px');
+        submit('#payment-form');
+        await new Promise(resolve => setTimeout(resolve, 1300));
+        check(run('state.appointments.length') === 4, 'Payment creates appointment');
+        check(d.querySelector('dialog').textContent.includes('confirmed'), 'Confirmation displayed');
+        modalLayout('Booking confirmation, 390px');
+        run("modal.close();role='doctor';doctorId='d0';doctorDay=" + JSON.stringify(bookingDate) + ";go('home')");
+        check(d.body.textContent.includes('Aarav'), 'Booking visible to doctor');
+        const statTops = Array.from(d.querySelectorAll('.screen-home > .page-heading + .grid > .card'))
+          .map(card => card.getBoundingClientRect().top);
+        check(statTops.length === 3 && Math.max(...statTops) - Math.min(...statTops) < 1,
+          'Doctor mobile statistics stay together on one row');
+        run('consult(state.appointments.at(-1).id)');
+        modalLayout('Doctor consultation, 390px');
+        click('[data-action="prescribe"]');
+        modalLayout('Prescription form, 390px');
+        for (const [name, value] of Object.entries({
+          medicine: 'Demo test medicine', dosage: '1 tablet', frequency: 'Once daily',
+          duration: '2 days', instructions: 'Fictional'
+        })) d.querySelector('[name="' + name + '"]').value = value;
+        submit('#prescription-form');
+        check(run('state.prescriptions.length') === 2, 'Doctor prescription saved');
+        check(run('state.records.some(record=>record.rx===state.prescriptions.at(-1).id)'), 'Prescription creates medical record');
+        run("role='patient';go('prescriptions')");
+        check(d.body.textContent.includes('Ananya'), 'Prescription visible to patient');
+        run("queueAppointment=state.appointments[0].id;go('queue')");
+        const oldToken = run('queueStatus(state.appointments[0]).current');
+        click('[data-action="advance-queue"]');
+        check(run('queueStatus(state.appointments[0]).current') === oldToken + 1, 'Queue state advances');
+        run("role='admin';adminTab='Payments';go('home');window.confirm=()=>true");
+        click('[data-action="refund"]');
+        check(run("state.appointments[0].payment==='Refund Pending'"), 'Refund requested');
+        click('[data-action="process-refund"]');
+        check(run("state.appointments[0].payment==='Refunded'&&state.appointments[0].status==='Cancelled'"), 'Refund processed');
+        run("adminTab='Commission';render()");
+        d.querySelector('[name="percent"]').value = 15;
+        submit('#commission-form');
+        check(run('state.commission') === 15, 'Commission calculation state');
+        run("doctor('d7').status='Pending';adminTab='KYC Verification';render()");
+        click('[data-action="kyc"][data-id="d7"]');
+        modalLayout('KYC review, 390px');
+        click('[data-action="kyc-approve"]');
+        check(run("doctor('d7').status==='Approved'"), 'KYC approval synchronizes');
+        check(JSON.parse(w.localStorage.getItem(storageKey)).commission === 15, 'Local storage persists workflow changes');
+
+        // Start the layout matrix with populated fixtures, independent of the
+        // booking, cancellation and commission mutations above.
+        run("state=seed();save();selectedPatient='self';doctorId='d0';doctorDay=day();queueAppointment='';");
+        const views = [
+          ['Launcher', "role='';go('launcher')"],
+          ['Patient sign-in', "role='patient';authRole='patient';go('auth')"],
+          ['Patient OTP', "role='patient';authRole='patient';authMobile='9000000001';go('otp')"],
+          ...['home', 'doctors', 'appointments', 'records', 'prescriptions', 'family', 'profile', 'queue', 'notifications']
+            .map(screen => ['Patient ' + screen, "role='patient';appointmentTab='Today';go(" + JSON.stringify(screen) + ')']),
+          ['Patient upcoming appointments', "role='patient';appointmentTab='Upcoming';go('appointments')"],
+          ['Patient completed appointments', "role='patient';appointmentTab='Completed';go('appointments')"],
+          ...['home', 'schedule', 'queue', 'profile', 'notifications']
+            .map(screen => ['Doctor ' + screen, "role='doctor';go(" + JSON.stringify(screen) + ')']),
+          ...run('adminTabs').map(tab => ['Admin ' + tab,
+            "role='admin';adminTab=" + JSON.stringify(tab) + ";adminSearch='';adminDate='';adminStatus='';adminDoctor='';go('home')"])
+        ];
+        for (const width of widths) {
+          await resize(width);
+          for (const [name, source] of views) {
+            closeModal();
+            run(source);
+            await pause();
+            check(Boolean(d.querySelector('main')), name + ' renders at ' + width + 'px');
+            layout(name + ', ' + width + 'px');
+            if (name === 'Admin Dashboard') {
+              const menu = d.querySelector('.mobile-menu');
+              if (menu && visible(menu)) {
+                click('[data-action="admin-menu"]');
+                await pause();
+                check(d.querySelectorAll('.sidebar.open button').length === run('adminTabs.length'),
+                  'All admin sections reachable at ' + width + 'px');
+                layout('Expanded admin navigation, ' + width + 'px');
+              }
+            }
+          }
+          results.push('PASS COMPLETE SCREEN MATRIX AT ' + width + 'px');
+          output.textContent = results.join('\n') + '\nRUNNING — remaining widths and dialogs';
+        }
+
+        const modalViews = [
+          ['Doctor profile', "role='patient';go('doctors');showDoctor('d0')"],
+          ['Booking form', "role='patient';go('doctors');booking={doctor:'d0',patient:'self',date:" +
+            JSON.stringify(bookingDate) + ",time:'09:00',type:'Offline',step:1};bookingView()"],
+          ['Booking review', 'booking.step=2;bookingView()'],
+          ['Payment form', 'booking.step=3;bookingView()'],
+          ['Appointment details', "role='patient';go('appointments');detail(state.appointments[0].id)"],
+          ['Medical document', "role='patient';go('records');showRecord('r1')"],
+          ['Patient prescription', "role='patient';go('prescriptions');showRx('rx1')"],
+          ['Family member form', "role='patient';go('family');familyEdit('f1')"],
+          ['Patient profile form', "role='patient';go('profile');document.querySelector('[data-action=edit-profile]').click()"],
+          ['Doctor consultation', "role='doctor';go('home');consult(state.appointments[0].id)"],
+          ['Medical history', "role='doctor';history('self')"],
+          ['Prescription editor', "role='doctor';prescribe(state.appointments[0].id)"],
+          ['KYC review', "role='admin';adminTab='KYC Verification';go('home');document.querySelector('[data-action=kyc][data-id=d0]').click()"],
+          ['Support request', "role='admin';adminTab='Complaints / Support';go('home');document.querySelector('[data-action=complaint]').click()"]
+        ];
+        for (const width of [320, 390, 768]) {
+          await resize(width);
+          for (const [name, source] of modalViews) {
+            closeModal();
+            run(source);
+            await pause();
+            modalLayout(name + ', ' + width + 'px');
+          }
+        }
+        check(runtimeErrors.length === 0, 'No uncaught JavaScript errors or rejected promises');
+      } catch (error) {
+        failure = error;
+      } finally {
+        finished = true;
+        try {
+          closeModal();
+        } catch (error) {
+          if (!failure) failure = error;
+        }
+        restoreStorage();
+        w.removeEventListener('error', onError);
+        w.removeEventListener('unhandledrejection', onRejection);
+        window.removeEventListener('pagehide', restoreStorage);
+        const restored = w.localStorage.getItem(storageKey) === (originalEntry ? originalEntry[1] : null);
+        results.push((restored ? 'PASS ' : 'FAIL ') + 'Original local data restored');
+        if (!restored && !failure) failure = new Error('Original local data could not be restored');
+        // Remove the fixture app to prevent later clicks saving test data over
+        // the restored user data.
+        frame.remove();
+        output.textContent = results.join('\n') + (failure ? '\nFAIL ' + failure.stack : '\nALL CHECKS PASSED');
+        document.documentElement.dataset.qaStatus = failure ? 'failed' : 'passed';
+      }
+    };
+    frame.src = 'index.html';
+  </script>
+</body>
+</html>
