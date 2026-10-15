@@ -28,32 +28,35 @@ This folder is inside your Desktop workspace: `Desktop\veer\My-Doctor`.
 6. Admin commission settings update payment calculations. KYC decisions, account blocking, support status, notifications, role configuration, and audit events persist locally.
 7. Doctor → Schedule updates the available patient booking days and slots. Existing booked slots are excluded.
 8. Medical Records accepts local PDF, image, or text files up to 2 MB each. Small files are saved as data URLs in localStorage and can be downloaded again.
+9. Admin → Doctors → Add doctor / Edit doctor manages qualifications, experience, registration, contact information, clinic, city, languages, availability, account status and consultation charge. The current fee appears in patient search, profiles and new bookings. Historical appointment payments retain their original amount. Upload a JPG/PNG/WebP profile photo up to 1 MB.
 
 ## Files
 
 - `index.html`: application entry point
 - `styles.css`: responsive mobile, tablet, and desktop styling
 - `app.js`: local mock data, rendering, interactions, and persistence
-- `assets/`: local SVG doctor illustration and browser icon
+- `patient-ui.js` / `patient-ui.css`: interactive care banner, photographic profiles and patient typography
+- `admin-doctors.js` / `admin-doctors.css`: doctor management and pricing controls
+- `assets/`: bundled stock doctor portraits, generated banner photo, icons and source credits
 - `README.md`: instructions and demo guide
 - `qa.html`: browser workflow and layout checks; restores saved browser data after the run
 
 ## Mobile UI
 
-Patient screens prioritize phones from 320–430px. The compact header, six-service grid, upcoming appointment and queue card, and fixed bottom navigation use local SVG icons. Doctor listings use full-width cards and a horizontally scrolling speciality filter. Booking and record dialogs open as scrollable bottom sheets with sticky close controls and visible inline feedback. Forms use 16px text and navigation controls have touch targets of at least 44px. Safe-area padding supports phones with display cutouts and home indicators; reduced-motion preferences are respected.
+Patient screens prioritize phones from 320–430px. The six-service grid, appointment cards and fixed bottom navigation use consistent SVG icons. Patient content uses a readable text scale with 16px form fields. Doctor listings include bundled photographic portraits. The care banner has three working slides for appointments, family profiles and records, with buttons, pagination, keyboard controls and touch swipe; it stays still while being read. Booking and record dialogs use scrollable bottom sheets. Navigation targets are at least 44px, with safe-area padding and reduced-motion support.
 
 To share the project files, include the whole folder, including `assets`. To share a browser link, serve the repository root with a static hosting provider; this repository alone is source code, not a deployed website.
 
 ## Verification
 
-Headless Chrome checks cover patient OTP sign-in, doctor search, successful booking and payment, doctor-side appointment visibility, prescription creation and patient visibility, queue advancement, refund request and processing, commission updates, KYC approval, and localStorage persistence. A matrix checks 33 views (including all 14 Admin sections) at 320, 360, 375, 390, 414, 430, 768, and 1280 pixels; phones use a short 568px height. Checks include page overflow, navigation target size, mobile form font size, bottom navigation bounds, runtime errors, and 14 dialog flows. This does not replace testing on physical Android/iPhone devices. The test harness restores the original app storage after completion.
+Headless Chrome checks cover sign-in, doctor search, booking/payment, prescriptions, queue advancement, refunds, commission, KYC, localStorage, banner controls, photo loading and admin doctor edits. Pricing checks verify that admin changes reach patient checkout while old receipts keep their original fee. A matrix checks 31 views (including all 12 Admin sections) at 320, 360, 375, 390, 414, 430, 768 and 1280 pixels, plus doctor management and other dialog flows. Phones use a short 568px height. Checks cover overflow, touch targets, patient text sizes, mobile inputs, navigation bounds and runtime errors. Physical Android/iPhone testing remains separate. Original app storage is restored after completion.
 
 ## Prototype boundaries
 
 All people, documents, payments, and records are fictional. OTP, payments, and queue movement are simulated. No real medical services, messaging, calling, production authentication, or server storage are provided. Online is an appointment type only; there is no audio/video consultation.
 
-Hospital and Pharmacy admin sections are management directories only, as requested. Role permissions are saved UI configuration; they do not provide security enforcement. KYC uploads retain document filenames for review rather than medical identity file contents. Seeded medical documents show metadata; uploaded medical records retain file data. Consent controls the doctor’s medical-history view.
+The Admin panel excludes Hospital and Pharmacy Management. Role permissions are saved UI configuration; they do not provide security enforcement. KYC uploads retain document filenames for review rather than medical identity file contents. Seeded medical documents show metadata; uploaded medical records retain file data. Consent controls the doctor’s medical-history view.
 
 State is shared between workspaces in the same browser using localStorage. Browser storage limits apply; resetting demo data or clearing browser storage removes changes. Direct-file storage behavior and cross-tab events can vary by browser; use the same browser and tab for role switching. For a server-based local preview, serve this folder with any static file server.
 
-The visual design uses local CSS, SVG illustrations and icons, and some system emoji, with no external asset dependency. Emoji appearance varies by platform.
+The doctor names are fictional; bundled stock portraits do not identify real doctors by those names. Actual doctor photos can be supplied through Admin. Source/license links are in `assets/PHOTO-CREDITS.md`. The banner photo was generated using the built-in image generation tool; its prompt is in `assets/BANNER-PROMPT.md`. All runtime image and icon assets are bundled locally.

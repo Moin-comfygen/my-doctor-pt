@@ -63,6 +63,37 @@
         if (!form.checkValidity()) throw new Error('Invalid test form ' + selector);
         form.requestSubmit();
       };
+      const fill = (selector, values) => {
+        const form = d.querySelector(selector);
+        if (!form) throw new Error('Missing form ' + selector);
+        for (const [name, value] of Object.entries(values)) {
+          const input = form.elements.namedItem(name);
+          if (!input) throw new Error('Missing form field ' + name);
+          input.value = value;
+        }
+      };
+      const waitFor = async condition => {
+        const deadline = Date.now() + 2500;
+        while (!condition() && Date.now() < deadline) await pause();
+      };
+      const checkImages = async (selector, label) => {
+        const images = Array.from(d.querySelectorAll(selector));
+        check(images.length > 0, label + ': images are present');
+        check(images.every(image => /^assets\//.test(image.getAttribute('src')) &&
+          /\.(?:avif|jpe?g|png|webp)(?:$|[?#])/i.test(image.getAttribute('src'))),
+          label + ': photographs use bundled image files');
+        // Eager loading here also checks assets belonging to cards below the
+        // small test viewport. Production loading behavior stays unchanged.
+        images.forEach(image => { image.loading = 'eager'; });
+        await Promise.all(images.map(image => image.complete ? Promise.resolve() :
+          new Promise(resolve => {
+            image.addEventListener('load', resolve, { once: true });
+            image.addEventListener('error', resolve, { once: true });
+            setTimeout(resolve, 5000);
+          })));
+        check(images.every(image => image.complete && image.naturalWidth > 0),
+          label + ': all photographs load successfully');
+      };
       const resize = async width => {
         frame.style.width = width + 'px';
         frame.style.height = (width <= 430 ? 568 : width === 768 ? 740 : 800) + 'px';
@@ -102,6 +133,21 @@
           check(rect.left >= -1 && rect.right <= w.innerWidth + 1 && rect.bottom <= w.innerHeight + 1,
             label + ': bottom navigation fits viewport');
         }
+        if (d.body.dataset.role === 'patient') {
+          const copy = Array.from(d.querySelectorAll('main, main *')).filter(visible)
+            .filter(element => Array.from(element.childNodes).some(node =>
+              node.nodeType === w.Node.TEXT_NODE && node.textContent.trim()));
+          const smallCopy = copy.filter(element => parseFloat(w.getComputedStyle(element).fontSize) < 12);
+          check(!smallCopy.length, label + ': patient text is at least 12px' +
+            (smallCopy.length ? ' (' + smallCopy.slice(0, 5).map(describe).join(', ') + ')' : ''));
+          if (navigation && visible(navigation)) {
+            check(Array.from(navigation.querySelectorAll('button')).every(button =>
+              parseFloat(w.getComputedStyle(button).fontSize) >= 11),
+              label + ': bottom navigation labels are at least 11px');
+            check(navigation.querySelectorAll('button .nav-icon svg path[d]').length === 5,
+              label + ': all five navigation icons are drawn');
+          }
+        }
       };
       const modalLayout = label => {
         const modal = d.querySelector('dialog[open]');
@@ -140,8 +186,55 @@
         d.querySelector('[name="otp"]').value = '1234';
         submit('#auth-form');
         check(d.body.textContent.includes('Hello, Aarav'), 'Patient OTP sign-in');
+        await resize(390);
+        const bannerTitle = () => d.querySelector('.care-banner h1, .care-banner h2').textContent;
+        const firstBannerTitle = bannerTitle();
+        await checkImages('.care-banner img', 'Home care banner');
+        const bannerImageRect = d.querySelector('.care-banner img').getBoundingClientRect();
+        const bannerViewportRect = d.querySelector('.banner-viewport').getBoundingClientRect();
+        check(bannerImageRect.width > 0 && bannerImageRect.height > 0 &&
+          bannerImageRect.top <= bannerViewportRect.top + 1 &&
+          bannerImageRect.bottom >= bannerViewportRect.bottom - 1 &&
+          bannerImageRect.right >= bannerViewportRect.right - 1,
+          'Banner photograph fills the visible banner area');
+        const headerBeforeBannerChange = d.querySelector('.app-header');
+        const bannerDots = d.querySelectorAll('.banner-dots [data-action="banner-slide"]');
+        check(bannerDots.length >= 3, 'Home banner provides at least three selectable care messages');
+        const selectedBannerDot = index => {
+          const dot = d.querySelector('.banner-dots [data-index="' + index + '"]');
+          return dot && ['aria-current', 'aria-pressed', 'aria-selected']
+            .some(attribute => dot.getAttribute(attribute) === 'true');
+        };
+        click('.care-banner [data-action="banner-next"]');
+        check(bannerTitle() !== firstBannerTitle && selectedBannerDot(1),
+          'Next banner changes its message and announces the selected slide');
+        click('.care-banner [data-action="banner-prev"]');
+        check(bannerTitle() === firstBannerTitle && selectedBannerDot(0),
+          'Previous banner returns to the first care message');
+        click('.banner-dots [data-index="2"]');
+        check(bannerTitle() !== firstBannerTitle && selectedBannerDot(2),
+          'Banner dots select a care message');
+        check(d.querySelector('.app-header') === headerBeforeBannerChange,
+          'Changing a banner keeps the surrounding page in place');
+        layout('Interactive home banner, 390px');
+        click('.banner-dots [data-index="0"]');
+        click('.care-banner [data-action="navigate"]');
+        check(run('screen') === 'doctors', 'Book appointment banner opens Find doctors');
+        run("go('home')");
+        click('.banner-dots [data-index="1"]');
+        click('.care-banner [data-action="navigate"]');
+        check(run('screen') === 'family', 'Family care banner opens Family members');
+        run("go('home')");
+        click('.banner-dots [data-index="2"]');
+        click('.care-banner [data-action="navigate"]');
+        check(run('screen') === 'records', 'Health records banner opens Medical records');
+        run("go('home')");
+        click('.banner-dots [data-index="0"]');
         click('[data-screen="doctors"]');
         check(d.querySelectorAll('.doctor').length === 8, 'Eight doctor profiles');
+        await checkImages('.doctor .doctor-avatar img', 'Find doctors profile portraits');
+        check(new Set(Array.from(d.querySelectorAll('.doctor .doctor-avatar img'), image => image.getAttribute('src'))).size === 8,
+          'Each demo doctor has an individual profile portrait');
         await resize(390);
         const specialityRail = d.querySelector('.speciality-rail');
         specialityRail.scrollLeft = specialityRail.scrollWidth;
@@ -219,6 +312,102 @@
         check(run("doctor('d7').status==='Approved'"), 'KYC approval synchronizes');
         check(JSON.parse(w.localStorage.getItem(storageKey)).commission === 15, 'Local storage persists workflow changes');
 
+        run("adminTab='Doctors';adminSearch='';render()");
+        const adminSections = run('adminTabs');
+        check(adminSections.length === 12 && !adminSections.includes('Hospital Management') &&
+          !adminSections.includes('Pharmacy Management') &&
+          !d.querySelector('.sidebar').textContent.includes('Hospital Management') &&
+          !d.querySelector('.sidebar').textContent.includes('Pharmacy Management'),
+          'Admin navigation contains twelve sections without hospital or pharmacy management');
+        click('[data-action="admin-doctor-add"]');
+        modalLayout('Add doctor form, 390px');
+        fill('#admin-doctor-form', {
+          name: 'Dr. QA Care', mobile: '9000000099', qualification: 'MBBS, MD',
+          experience: 7, registration: 'QA-MCI-12345', speciality: 'General Physician',
+          fee: 725, clinic: 'QA Community Care', city: 'Pune', languages: 'English, Hindi',
+          bio: 'Fictional clinician created by the browser workflow check.',
+          status: 'Approved', accountStatus: 'Active', start: '09:00', end: '17:00', duration: 30
+        });
+        submit('#admin-doctor-form');
+        await pause();
+        const createdDoctorId = run("state.doctors.find(doctor=>doctor.name==='Dr. QA Care')?.id");
+        check(Boolean(createdDoctorId) && run('doctor(' + JSON.stringify(createdDoctorId) + ').fee') === 725,
+          'Admin adds a doctor with numeric consultation charges');
+        click('[data-action="admin-doctor-details"][data-id="' + createdDoctorId + '"]');
+        modalLayout('Admin doctor details, 390px');
+        const doctorDetails = d.querySelector('dialog[open]').textContent;
+        check(['Dr. QA Care', 'QA-MCI-12345', 'QA Community Care', 'Pune', 'English', 'Hindi',
+          run('money(725)'), '09:00', '17:00'].every(value => doctorDetails.includes(value)),
+          'Manage doctors details show charges, registration, clinic, languages and availability');
+        closeModal();
+        click('[data-action="admin-doctor-edit"][data-id="' + createdDoctorId + '"]');
+        fill('#admin-doctor-form', { fee: 875 });
+        // A generated PNG fixture exercises the native file input, image
+        // validation and persistence without reading personal files.
+        const photoCanvas = d.createElement('canvas');
+        photoCanvas.width = photoCanvas.height = 32;
+        const photoContext = photoCanvas.getContext('2d');
+        photoContext.fillStyle = '#d4f3eb';
+        photoContext.fillRect(0, 0, 32, 32);
+        const photoBytes = w.Uint8Array.from(w.atob(photoCanvas.toDataURL('image/png').split(',')[1]), character => character.charCodeAt(0));
+        const photoTransfer = new w.DataTransfer();
+        photoTransfer.items.add(new w.File([photoBytes], 'qa-profile.png', { type: 'image/png' }));
+        const photoInput = d.querySelector('#admin-doctor-form [name="photo"]');
+        photoInput.files = photoTransfer.files;
+        photoInput.dispatchEvent(new w.Event('change', { bubbles: true }));
+        submit('#admin-doctor-form');
+        await waitFor(() => !d.querySelector('#admin-doctor-form'));
+        check(JSON.parse(w.localStorage.getItem(storageKey)).doctors.find(doctor => doctor.id === createdDoctorId).fee === 875,
+          'Edited doctor consultation charges persist in local storage');
+        const savedDoctor = JSON.parse(w.localStorage.getItem(storageKey)).doctors.find(doctor => doctor.id === createdDoctorId);
+        check(savedDoctor.photo.startsWith('data:image/png;base64,') && savedDoctor.photoFilename === 'qa-profile.png',
+          'Admin profile photograph upload is validated and persisted');
+        click('[data-action="admin-doctor-edit"][data-id="' + createdDoctorId + '"]');
+        check(d.querySelector('#admin-doctor-form [name="fee"]').value === '875' &&
+          d.querySelector('#admin-doctor-form [name="clinic"]').value === 'QA Community Care',
+          'Reopening the doctor editor retains charges and professional details');
+        closeModal();
+
+        const historicalFees = run('JSON.stringify(state.appointments.map(appointment=>[appointment.id,appointment.fee]))');
+        click('[data-action="admin-doctor-edit"][data-id="d0"]');
+        fill('#admin-doctor-form', { fee: 845, clinic: 'My Doctor Care Clinic', city: 'Pune' });
+        submit('#admin-doctor-form');
+        await pause();
+        check(run('doctor("d0").fee') === 845 &&
+          run('JSON.stringify(state.appointments.map(appointment=>[appointment.id,appointment.fee]))') === historicalFees,
+          'Updating consultation charges preserves the fees of historical appointments');
+        run("role='patient';search='';filter='All';go('doctors')");
+        const createdDoctorImage = d.querySelector('[data-action="doctor-profile"][data-id="' + createdDoctorId + '"]')
+          .closest('.doctor').querySelector('.doctor-avatar img');
+        check(createdDoctorImage.getAttribute('src') === savedDoctor.photo,
+          'The patient doctor list uses the profile photograph uploaded by the admin');
+        const editedDoctorCard = d.querySelector('[data-action="doctor-profile"][data-id="d0"]').closest('.doctor');
+        check(editedDoctorCard.textContent.includes(run('money(845)')),
+          'Patient doctor list shows the charge set by the admin');
+        click('[data-action="doctor-profile"][data-id="d0"]');
+        check(d.querySelector('dialog[open]').textContent.includes(run('money(845)')),
+          'Doctor profile shows the admin consultation charge');
+        click('[data-action="book"]');
+        const updatedBookingDate = run("Array.from({length:14},(_,i)=>day(i+1)).find(date=>slots(doctor('d0'),date).length)");
+        const updatedDateInput = d.querySelector('#booking-form [name="date"]');
+        updatedDateInput.value = updatedBookingDate;
+        updatedDateInput.dispatchEvent(new w.Event('change', { bubbles: true }));
+        submit('#booking-form');
+        check(d.querySelector('dialog[open]').textContent.includes(run('money(845)')),
+          'Appointment review uses the admin consultation charge');
+        click('[data-action="payment"]');
+        check(d.querySelector('#payment-form button[type="submit"]').textContent.includes(run('money(845)')),
+          'Checkout charges the fee configured by the admin');
+        const appointmentsBeforeUpdatedPayment = run('state.appointments.length');
+        submit('#payment-form');
+        await new Promise(resolve => setTimeout(resolve, 1300));
+        check(run('state.appointments.length') === appointmentsBeforeUpdatedPayment + 1 &&
+          run('state.appointments.at(-1).fee') === 845,
+          'Newly paid appointment stores the updated consultation charge');
+        check(run('JSON.stringify(state.appointments.slice(0,-1).map(appointment=>[appointment.id,appointment.fee]))') === historicalFees,
+          'Completing a new booking leaves historical payment amounts unchanged');
+        closeModal();
+
         // Start the layout matrix with populated fixtures, independent of the
         // booking, cancellation and commission mutations above.
         run("state=seed();save();selectedPatient='self';doctorId='d0';doctorDay=day();queueAppointment='';");
@@ -273,6 +462,9 @@
           ['Medical history', "role='doctor';history('self')"],
           ['Prescription editor', "role='doctor';prescribe(state.appointments[0].id)"],
           ['KYC review', "role='admin';adminTab='KYC Verification';go('home');document.querySelector('[data-action=kyc][data-id=d0]').click()"],
+          ['Admin doctor details', "role='admin';adminTab='Doctors';go('home');document.querySelector('[data-action=admin-doctor-details][data-id=d0]').click()"],
+          ['Admin doctor editor', "role='admin';adminTab='Doctors';go('home');document.querySelector('[data-action=admin-doctor-edit][data-id=d0]').click()"],
+          ['Admin add doctor', "role='admin';adminTab='Doctors';go('home');document.querySelector('[data-action=admin-doctor-add]').click()"],
           ['Support request', "role='admin';adminTab='Complaints / Support';go('home');document.querySelector('[data-action=complaint]').click()"]
         ];
         for (const width of [320, 390, 768]) {
