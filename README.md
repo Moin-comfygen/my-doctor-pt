@@ -1,5 +1,9 @@
 # My Doctor — interactive healthcare MVP
 
+## Live demo
+
+Open **https://my-doctor-pt.vercel.app/** on a phone or desktop. The demo OTP is **1234**. The Vercel project deploys from this repository's `main` branch.
+
 ## Run
 
 Double-click **index.html** in this folder. Use a current Chrome, Edge, Firefox, or Safari browser. No build, installation, internet connection, or backend is required. Keep `index.html`, `styles.css`, `app.js`, and the `assets` folder together.
